@@ -1,0 +1,438 @@
+#!/bin/bash
+#
+# Compile instead of apt
+#
+# Vincent van Adrighem <vincent@vanadrighem.eu>
+
+# Uncomment if you need to debug.
+# set -x
+# Uncomment if you want to get rid of all output.
+#exec > /dev/null 2>&1
+
+# Default settings, do not touch.
+SCRIPT_INVOCATION_SHORT_NAME="$(basename "${0}")"
+set -e    # exit on errors
+set -u    # disallow usage of unset variables
+#set -o pipefail  # make pipe writer failure to cause exit on error
+RETVAL=0
+[ -x "$(which gsed)" ] && SED="gsed" || SED="sed"
+REQUIRED_TOOLS="sudo gawk cut grep ${SED} apt apt-mark apt-ftparchive debuild tee dd"
+###===###
+# An empty directory to build packages in. Existing files will be deleted.
+BUILD_LOCATION=/home/Xoth0Goo5eeh0aemaelu/src/local
+# An empty directory to hold a local package repository
+PACKAGE_LOCATION=/home/Xoth0Goo5eeh0aemaelu/src/deb
+DEBUG=false
+###===###
+
+# Write functions to this section.
+#
+# Use this function when you want to inform user about something.
+# If you don't want to get script name in front of the message,
+# which would be a bit strange, use normal echo.
+LOGGER='echo'
+msg() {
+  $LOGGER "${SCRIPT_INVOCATION_SHORT_NAME}: ${@}"
+}
+debug() {
+  if $DEBUG
+  then
+    "$LOGGER" "${SCRIPT_INVOCATION_SHORT_NAME}: ${@}" || true
+  fi
+}
+
+usage() {
+  echo "Usage:"
+  echo " ${0} [options] [command] [packages ...]"
+  echo ""
+  echo " You can install packages explicitly, or upgrade your entire system."
+  echo "   one of -U/upgrade or an explicit package is required"
+  echo ""
+  echo " OPTIONS"
+  echo " -r   reinstall package (e.g. to recompile an already installed package)"
+  echo " -m i dependency compilation depth (default: 3), 1 disables recursion"
+  echo " -U   upgrade specified packages (or upgrade everything)"
+  echo " -u   download package information from all configured sources"
+  echo " -h   display this help and exit"
+  echo " -v   verbose output (a.k.a. debug)"
+  echo " -V   output version information and exit"
+  echo ""
+  echo " COMMANDS (optional)"
+  echo " upgrade   upgrade packages. (Alt. -U)"
+  echo " install   (default) install packages"
+  echo " update    download package information from all configured sources (Alt. -u)"
+  exit "${1}"
+}
+
+need_to_compile() {
+  # If package can be compiled, do nothing.
+  # If package can not be compiled, send continue to
+  # continue the next loop
+  TEST_PACKAGE=$1
+  TEST_SOURCE_PACKAGE=$(LANG=C apt -qq source --dry-run "${TEST_PACKAGE}" 2>/dev/null | grep -E "^Picking "|cut -d\' -f2)
+  TEST_SOURCE_PACKAGE=${TEST_SOURCE_PACKAGE:-${TEST_PACKAGE}} # Use normal package if source name is the same
+  if grep -q -E -- '-dev$' <<< "${TEST_PACKAGE}"
+  then
+    debug "${TEST_PACKAGE} is a development package, likely arch independent"
+    return 1
+  fi
+  if grep -q " ${TEST_PACKAGE} " <<< "${COMPILED_PACKAGES}"
+  then
+    debug "${TEST_PACKAGE} was already compiled"
+    return 1
+  fi
+  if [ -n "${TEST_SOURCE_PACKAGE}" ] && grep -q " ${TEST_SOURCE_PACKAGE} " <<< "${COMPILED_PACKAGES}"
+  then
+    debug "${TEST_PACKAGE} source was already compiled"
+    return 1
+  fi
+  # shellcheck disable=SC2046
+  TEST_APT_INSTALL_LINE="$(apt -qq install -y --allow-downgrades --dry-run $("${REINSTALL}" && echo "--reinstall") "${TEST_PACKAGE}" 2>/dev/null| grep "Inst ${TEST_PACKAGE}" || true)"
+  if grep -q "\[all\]" <<< "${TEST_APT_INSTALL_LINE}"
+  then
+    debug "${TEST_PACKAGE} arch-independent"
+    return 1
+  fi
+  if ${SED} 's/^.*([^ ]\+ \([^ ]\+\) .*$/\1/' <<< "${TEST_APT_INSTALL_LINE}" | grep -q local
+  then
+    debug "${TEST_PACKAGE} was already compiled"
+    return 1
+  fi
+  debug "${TEST_PACKAGE} needs to be compiled"
+  if ! apt -qq build-dep -y --allow-downgrades --dry-run "${TEST_PACKAGE}" 2>/dev/null >/dev/null
+  then
+    debug "${TEST_PACKAGE} cannot be compiled. Using binary package."
+    return 1
+  fi
+  TEST_TARGET_VERSION=$(LANG=C apt -qq policy "${TEST_PACKAGE}" 2>/dev/null| gawk '/Candidate: /{print $NF}'| ${SED} 's/^.*://')
+  if ! apt -qq --dry-run source "${TEST_SOURCE_PACKAGE}=${TEST_TARGET_VERSION}" 2>/dev/null >/dev/null
+  then
+    debug "Source for ${TEST_PACKAGE} version ${TEST_TARGET_VERSION} not available. Using binary package."
+    return 1
+  fi
+  return 0
+}
+
+
+
+
+
+
+## Script preparation ##
+
+# Check for required tools
+for TOOL in $REQUIRED_TOOLS
+do
+  if ! [ -x "$(which "${TOOL}")" ]
+  then
+    msg "Tool not found: $TOOL"
+    msg "Exiting"
+    exit 2
+  fi
+done
+
+# Check for required configuration files
+if [ -f "${HOME}/.${SCRIPT_INVOCATION_SHORT_NAME}rc" ]
+then
+  # shellcheck source=/dev/null
+  source "${HOME}/.${SCRIPT_INVOCATION_SHORT_NAME}rc"
+else
+  msg "Creating config file: ${HOME}/.${SCRIPT_INVOCATION_SHORT_NAME}rc"
+  msg "IMPORTANT!: Please edit to match your system (paths)"
+  ${SED} '/^###===###/,/^###===###/!d;//d' "$0" > "${HOME}/.${SCRIPT_INVOCATION_SHORT_NAME}rc"
+  exit 3
+fi
+if ! [ -f /etc/apt/sources.list.d/local.list ]
+then
+  msg "Adding local repo to your apt sources (/etc/apt/sources.list.d/local.list)."
+  echo "deb [trusted=yes] file:$(dirname ${PACKAGE_LOCATION}) $(basename ${PACKAGE_LOCATION})/" | sudo dd of=/etc/apt/sources.list.d/local.list
+  exit 3
+fi
+if ! [ -f /etc/dpkg/buildflags.conf ]
+then
+  msg "Adding build optimization options to build config (/etc/dpkg/buildflags.conf)."
+  echo "STRIP CFLAGS -O2
+STRIP CXXFLAGS -O2
+APPEND CFLAGS -O3 -march=native -mtune=native
+APPEND CXXFLAGS -O3 -march=native -mtune=native
+APPEND LDFLAGS -O3 -march=native -mtune=native" | sudo dd of=/etc/dpkg/buildflags.conf
+  exit 3
+fi
+if ! [ -f "${PACKAGE_LOCATION}/aptftp.conf" ]
+then
+  msg "Creating Repository config ${PACKAGE_LOCATION}/aptftp.conf"
+  echo "APT::FTPArchive::Release {
+  Origin \"local\";
+  Label \"local\";
+  Suite \"$(basename ${PACKAGE_LOCATION})/\";
+  Codename \"local\";
+  Description \"Local repository\";
+};
+" > "${PACKAGE_LOCATION}/aptftp.conf"
+fi
+if ! [ -f "/etc/apt/preferences.d/local.pref" ]
+then
+  msg "Creating Local Repository apt config"
+  echo 'Package: *
+Pin: release o=local
+Pin-Priority: 900
+' | sudo dd of="/etc/apt/preferences.d/local.pref"
+fi
+
+DO_UPGRADE=false
+REINSTALL=false
+RECURSE_DEPTH=3
+PACKAGES=
+BUILD_DEP_PACKAGES=
+# shellcheck disable=SC2005
+APT_MARK_MANUAL=" $(echo "$(apt-mark -qq showmanual)") "
+if [ -v COMPILED_PACKAGES_FILE ]
+then
+  COMPILED_PACKAGES="$(cat "${COMPILED_PACKAGES_FILE}")"
+  debug "ENTRY COMPILED (from ${COMPILED_PACKAGES_FILE}): ${COMPILED_PACKAGES}"
+else
+  COMPILED_PACKAGES=" "
+  debug "EMPTY ENTRY COMPILED: ${COMPILED_PACKAGES}"
+fi
+while getopts rm:uUhvV OPTIONS
+do
+  case ${OPTIONS} in
+    r)
+      REINSTALL=true
+      ;;
+    m)
+      RECURSE_DEPTH="${OPTARG}"
+      ;;
+    u)
+      sudo apt update
+      ;;
+    U)
+      DO_UPGRADE=true
+      ;;
+    v)
+      DEBUG=true
+      ;;
+    h)
+      usage 0
+      ;;
+    V)
+      # Requires svn keyword to be set
+      #svn propset svn:keywords Revision generic.sh
+      msg '1.1'
+      # If you do not put the script to subversion use
+      # date output from moment you last changed the
+      # thing.  For example
+      #msg 'Mon Jun 11 09:43:41 CEST 2012'
+      exit 0
+      ;;
+    *)
+      usage 1
+      ;;
+  esac
+done
+shift $((OPTIND-1))
+if [ -z "$*" ]
+then
+  if ! $DO_UPGRADE
+  then
+    usage 1
+  fi
+else
+  if [ "$1" = "install" ]
+  then
+    shift 1
+  elif [ "$1" = "upgrade" ]
+  then
+    shift 1
+    DO_UPGRADE=true
+  elif [ "$1" = "update" ]
+  then
+    shift 1
+    sudo apt update
+    exit 0
+  fi
+fi
+
+
+## Actual script starts here ##
+
+# To get the initial root token (attempt at semi passwordless operation)
+sudo true
+
+LEVEL=$(pgrep -fc "${SCRIPT_INVOCATION_SHORT_NAME}")
+msg "$(printf %"${LEVEL}"s |tr " " "=";echo "> ") Entering level ${LEVEL}"
+if $DO_UPGRADE
+then
+  if [ -z "$*" ]
+  then
+    # shellcheck disable=SC2005,SC2046
+    PACKAGES=$(echo $(apt upgrade --dry-run 2> /dev/null |gawk '/^Inst/{print $2}'))
+  else
+    PACKAGES=$*
+  fi
+else
+  if [ -z "$*" ]
+  then
+    usage 1
+  fi
+  PACKAGES=$*
+  APT_MARK_MANUAL="${APT_MARK_MANUAL}${PACKAGES} "
+fi
+
+trap 'echo -n "${SCRIPT_INVOCATION_SHORT_NAME}: exit on error, cleaning up"
+  [[ -v COMPILED_PACKAGES_FILE ]] && rm -f "${COMPILED_PACKAGES_FILE}"
+  for PACKAGE in ${PACKAGES}
+  do
+    echo -n .
+    if ! grep -q -w " ${PACKAGE} " <<< "${APT_MARK_MANUAL}"
+    then
+      sudo apt-mark -qq auto "${PACKAGE}"
+    fi
+  done
+  echo
+  exit 1' ERR INT
+
+msg "Evaluating $PACKAGES"
+#First, check if the package is already installed
+# shellcheck disable=SC2086
+if ! $REINSTALL && ! apt -qq install -y --allow-downgrades --dry-run ${PACKAGES} 2> /dev/null |grep -q "^Inst"
+then
+  # shellcheck disable=SC2086
+  sudo apt -qq install -y --allow-downgrades --dry-run ${PACKAGES}
+  if [ -v COMPILED_PACKAGES_FILE ]
+  then
+    echo "${COMPILED_PACKAGES}" > "${COMPILED_PACKAGES_FILE}"
+    debug "EXIT COMPILED (into ${COMPILED_PACKAGES_FILE}): ${COMPILED_PACKAGES}"
+  fi
+  exit 0
+fi
+if [ "${LEVEL}" -eq 1 ]
+then
+  # shellcheck disable=SC2046,SC2086
+  NUM_PACKAGES=$(apt -qq install -y --allow-downgrades --dry-run $($REINSTALL && echo "--reinstall") $PACKAGES 2> /dev/null | grep -c "^Inst")
+  CURRENT_PACKAGE=0
+fi
+#Do a dryrun standard install, to gather steps
+while read -r line
+do
+  PACKAGE=$(gawk '{print $2}' <<< "$line")
+  if [ "${LEVEL}" -eq 1 ]
+  then
+    CURRENT_PACKAGE=$((CURRENT_PACKAGE + 1))
+    msg "Package ${CURRENT_PACKAGE} of ${NUM_PACKAGES}: ${PACKAGE}"
+  fi
+
+  if ! need_to_compile "${PACKAGE}"
+  then
+    continue
+  fi
+
+  # Determine source package if any and if different from binary
+  SOURCE_PACKAGE=$(LANG=C apt -qq source --dry-run "${PACKAGE}" 2>/dev/null | grep -E "^Picking "|cut -d\' -f2)
+  SOURCE_PACKAGE=${SOURCE_PACKAGE:-${PACKAGE}} # Use normal package if source name is the same
+  # Add package to already compiled list before actual compilation to prevent loops
+  COMPILED_PACKAGES="${COMPILED_PACKAGES}${PACKAGE} $([ -n "${SOURCE_PACKAGE}" ] && echo "${SOURCE_PACKAGE} " || true)"
+  BUILD_DEP_PACKAGES="$(apt -qq --dry-run build-dep -y --allow-downgrades ${PACKAGE} 2>/dev/null |grep "^Inst"|gawk '{print $2}')"
+  NUMBER_BUILD_DEP_PACKAGES=$( wc -w <<< "${BUILD_DEP_PACKAGES}")
+  TARGET_VERSION=$(LANG=C apt -qq install -y --allow-downgrades --dry-run $($REINSTALL && echo "--reinstall") ${PACKAGE} 2> /dev/null | grep "Inst ${PACKAGE} " | ${SED} 's/^.*(\([^ ]\+\) .*$/\1/' | ${SED} 's/^.*://')
+  # Test that source code is available
+  if ! apt -qq source --dry-run "${SOURCE_PACKAGE}=${TARGET_VERSION}" 2>/dev/null >/dev/null
+  then
+    debug "Source for ${PACKAGE} version ${TARGET_VERSION} not available. Using binary package."
+    continue
+  fi
+
+  # loop through the build dependencies and install
+  if [ ${RECURSE_DEPTH} -gt 1 ]
+  then
+    BUILD_LOOP_COUNT=0
+    for BUILD_DEP_PACKAGE in ${BUILD_DEP_PACKAGES}
+    do
+      BUILD_LOOP_COUNT=$((${BUILD_LOOP_COUNT} + 1))
+      debug "Evaluating build dependency ${BUILD_LOOP_COUNT} of ${NUMBER_BUILD_DEP_PACKAGES} for ${PACKAGE}"
+      if [ "${BUILD_DEP_PACKAGE}" = "${PACKAGE}" ]
+      then
+        # This should never happen, but sometimes a package is its own build dependency
+        msg "Huh? This package requires itself for building. Forcing binary install, then recompiling."
+        sudo DEBIAN_FRONTEND=noninteractive apt -qq install -y --allow-downgrades ${BUILD_DEP_PACKAGE} </dev/null >/dev/null 2>/dev/null
+      else
+        if ! need_to_compile ${BUILD_DEP_PACKAGE}
+        then
+          continue
+        fi
+        MY_COMPILED_PACKAGES_FILE=$(mktemp)
+        echo "${COMPILED_PACKAGES}" > "${MY_COMPILED_PACKAGES_FILE}"
+        debug "ENTRY PREPARED COMPILED: $(cat ${MY_COMPILED_PACKAGES_FILE})"
+        COMPILED_PACKAGES_FILE=${MY_COMPILED_PACKAGES_FILE} $0 -m $((${RECURSE_DEPTH}-1)) "${BUILD_DEP_PACKAGE}"
+        msg "$(echo -n "<";printf %${LEVEL}s |tr " " "=";echo " ") Returning to level ${LEVEL}"
+        COMPILED_PACKAGES="$(cat ${MY_COMPILED_PACKAGES_FILE})"
+        debug "EXIT RETURNED COMPILED: ${COMPILED_PACKAGES}"
+        rm "${MY_COMPILED_PACKAGES_FILE}"
+      fi
+    done
+  fi
+  msg "Installing prepared build-dependencies for ${PACKAGE}..."
+  sudo DEBIAN_FRONTEND=noninteractive apt -qq build-dep -y --allow-downgrades ${PACKAGE} </dev/null >/dev/null 2>/dev/null
+  msg "Marking auto-installed packages..."
+  for BUILD_DEP_PACKAGE in ${BUILD_DEP_PACKAGES}
+  do
+    if ! grep -q -w " ${BUILD_DEP_PACKAGE} " <<< "${APT_MARK_MANUAL}"
+    then
+      sudo apt-mark -qq auto "${BUILD_DEP_PACKAGE}"
+    fi
+  done
+  cd "${BUILD_LOCATION}"
+  find -mindepth 1 -delete
+  msg "Grabbing source of ${SOURCE_PACKAGE} for ${PACKAGE}..."
+  if ! apt -qq source "${SOURCE_PACKAGE}=${TARGET_VERSION}" 2>/dev/null >/dev/null
+  then
+    msg "Source for ${PACKAGE} version ${TARGET_VERSION} seemed available, but isn't. Using binary package."
+    continue
+  fi
+  cd "$(find -mindepth 1 -maxdepth 1 -type d -print -quit)"
+  msg "Nicely compiling ${SOURCE_PACKAGE} for ${PACKAGE}..."
+  DEB_BUILD_OPTIONS=nocheck nice debuild -us -uc 2>/dev/null >/dev/null|| true
+  cd "${BUILD_LOCATION}"
+  # Check for compiled packages and error if not present
+  if ! ls *.deb 2>/dev/null >/dev/null
+  then
+    msg "Compiling ${PACKAGE} failed. Using binary package."
+    continue
+  fi
+  COMPILED_PACKAGES="${COMPILED_PACKAGES}$(echo $(ls *deb | cut -d_ -f1)) "
+  LANG=C mv $($DEBUG && echo -- -v || true) *.deb "${PACKAGE_LOCATION}"
+  cd "${PACKAGE_LOCATION}"
+  # Remove older packages that have been replaced
+  ls -1 *.deb |cut -d_ -f1|sort|uniq -c|grep -v "   1 "|awk '{print $NF}'|while read line ; do ls -1r ${line}_*deb|${SED} 1d;done|xargs rm -f
+  cd "$(dirname "${PACKAGE_LOCATION}")"
+  apt-ftparchive packages $(basename "${PACKAGE_LOCATION}") > $(basename "${PACKAGE_LOCATION}")/Packages
+  apt-ftparchive release -c=$(basename "${PACKAGE_LOCATION}")/aptftp.conf $(basename "${PACKAGE_LOCATION}") > $(basename "${PACKAGE_LOCATION}")/Release
+  msg "Updating package lists..."
+  sudo apt -qq update -o Dir::Etc::sourcelist="sources.list.d/local.list" \
+        -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" >/dev/null 2>/dev/null
+done < <(apt -qq install -y --allow-downgrades --dry-run $($REINSTALL && echo "--reinstall") $PACKAGES 2> /dev/null | grep "^Inst")
+msg "Installing ${PACKAGES}..."
+sudo DEBIAN_FRONTEND=noninteractive apt -qq install -y --allow-downgrades $($REINSTALL && echo "--reinstall") $PACKAGES </dev/null >/dev/null 2>/dev/null
+msg "Cleaning up build dependencies..."
+sudo DEBIAN_FRONTEND=noninteractive apt -qq autoremove -y </dev/null >/dev/null 2>/dev/null
+if $DO_UPGRADE
+then
+  msg "Marking auto-installed packages..."
+  for PACKAGE in ${PACKAGES}
+  do
+    if ! grep -q -w " ${PACKAGE} " <<< "${APT_MARK_MANUAL}"
+    then
+      sudo apt-mark -qq auto "${PACKAGE}"
+    fi
+  done
+fi
+
+# Also add the below lines to other exit points
+if [ -v COMPILED_PACKAGES_FILE ]
+then
+  echo "${COMPILED_PACKAGES}" > "${COMPILED_PACKAGES_FILE}"
+  debug "EXIT COMPILED (into ${COMPILED_PACKAGES_FILE}): ${COMPILED_PACKAGES}"
+fi
+exit ${RETVAL}
+# EOF
+
