@@ -2,7 +2,7 @@
 #
 # Compile instead of apt
 #
-# Vincent van Adrighem <vincent@vanadrighem.eu>
+# Vincent van Adrighem <vincent-github@vanadrighem.eu>
 
 # Uncomment if you need to debug.
 # set -x
@@ -110,6 +110,11 @@ need_to_compile() {
     debug "Source for ${TEST_PACKAGE} version ${TEST_TARGET_VERSION} not available. Using binary package."
     return 1
   fi
+  if [ -n "${TEST_SOURCE_PACKAGE}" ] && grep -q "${TEST_SOURCE_PACKAGE}=${TEST_TARGET_VERSION}" < "${FAILED_TO_COMPILE_PACKAGES_FILE}"
+  then
+    debug "${TEST_PACKAGE} failed to compile last time, not even trying"
+    return 1
+  fi
   return 0
 }
 
@@ -118,7 +123,7 @@ need_to_compile() {
 
 
 
-## Script preparation ##
+## SCRIPT PREPARATION ##
 
 # Check for required tools
 for TOOL in $REQUIRED_TOOLS
@@ -131,6 +136,7 @@ do
   fi
 done
 
+## CONFIGURATION FILES ##
 # Check for required configuration files
 if [ -f "${HOME}/.${SCRIPT_INVOCATION_SHORT_NAME}rc" ]
 then
@@ -184,6 +190,11 @@ REINSTALL=false
 RECURSE_DEPTH=3
 PACKAGES=
 BUILD_DEP_PACKAGES=
+FAILED_TO_COMPILE_PACKAGES_FILE="${HOME}/.${SCRIPT_INVOCATION_SHORT_NAME}.failed_to_compile"
+if ! [ -f "${FAILED_TO_COMPILE_PACKAGES_FILE}" ]
+then
+  touch "${FAILED_TO_COMPILE_PACKAGES_FILE}"
+fi
 # shellcheck disable=SC2005
 APT_MARK_MANUAL=" $(echo "$(apt-mark -qq showmanual)") "
 if [ -v COMPILED_PACKAGES_FILE ]
@@ -397,8 +408,10 @@ do
   if ! ls *.deb 2>/dev/null >/dev/null
   then
     msg "Compiling ${PACKAGE} failed. Using binary package."
+    echo "${SOURCE_PACKAGE}=${TARGET_VERSION}" >> "${FAILED_TO_COMPILE_PACKAGES_FILE}"
     continue
   fi
+  ${SED} "/${SOURCE_PACKAGE}=/d" -i "${FAILED_TO_COMPILE_PACKAGES_FILE}"  # Compiling was succesful. Cleanup failure file.
   COMPILED_PACKAGES="${COMPILED_PACKAGES}$(echo $(ls *deb | cut -d_ -f1)) "
   LANG=C mv $($DEBUG && echo -- -v || true) *.deb "${PACKAGE_LOCATION}"
   cd "${PACKAGE_LOCATION}"
