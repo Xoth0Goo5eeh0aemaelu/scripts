@@ -43,13 +43,13 @@ debug() {
 
 usage() {
   echo "Usage:"
-  echo " ${0} [options] [command] [packages ...]"
+  echo " ${0} [options...] [command] [packages ...]"
   echo ""
   echo " You can install packages explicitly, or upgrade your entire system."
   echo "   one of -U/upgrade or an explicit package is required"
   echo ""
   echo " OPTIONS"
-  echo " -r   reinstall package (e.g. to recompile an already installed package)"
+  echo " -r   reinstall package (e.g. to recompile same version as installed)"
   echo " -m i dependency compilation depth (default: 3), 1 disables recursion"
   echo " -U   upgrade specified packages (or upgrade everything)"
   echo " -u   download package information from all configured sources"
@@ -57,7 +57,7 @@ usage() {
   echo " -v   verbose output (a.k.a. debug)"
   echo " -V   output version information and exit"
   echo ""
-  echo " COMMANDS (optional)"
+  echo " COMMAND (optional)"
   echo " upgrade   upgrade packages. (Alt. -U)"
   echo " install   (default) install packages"
   echo " update    download package information from all configured sources (Alt. -u)"
@@ -295,7 +295,7 @@ trap 'echo -n "${SCRIPT_INVOCATION_SHORT_NAME}: exit on error, cleaning up"
   for PACKAGE in ${PACKAGES}
   do
     echo -n .
-    if ! grep -q -w " ${PACKAGE} " <<< "${APT_MARK_MANUAL}"
+    if ! grep -q " ${PACKAGE} " <<< "${APT_MARK_MANUAL}"
     then
       sudo apt-mark -qq auto "${PACKAGE}"
     fi
@@ -387,7 +387,7 @@ do
   msg "Marking auto-installed packages..."
   for BUILD_DEP_PACKAGE in ${BUILD_DEP_PACKAGES}
   do
-    if ! grep -q -w " ${BUILD_DEP_PACKAGE} " <<< "${APT_MARK_MANUAL}"
+    if ! grep -q " ${BUILD_DEP_PACKAGE} " <<< "${APT_MARK_MANUAL}"
     then
       sudo apt-mark -qq auto "${BUILD_DEP_PACKAGE}"
     fi
@@ -433,7 +433,7 @@ then
   msg "Marking auto-installed packages..."
   for PACKAGE in ${PACKAGES}
   do
-    if ! grep -q -w " ${PACKAGE} " <<< "${APT_MARK_MANUAL}"
+    if ! grep -q " ${PACKAGE} " <<< "${APT_MARK_MANUAL}"
     then
       sudo apt-mark -qq auto "${PACKAGE}"
     fi
