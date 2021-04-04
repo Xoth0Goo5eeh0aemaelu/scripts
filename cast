@@ -76,6 +76,14 @@ need_to_compile() {
     debug "${TEST_PACKAGE} is a development package, likely arch independent"
     return 1
   fi
+  for FOREIGN_ARCH in $(dpkg --print-foreign-architectures)
+  do
+    if grep -q -E ":${FOREIGN_ARCH}^" <<< "${TEST_PACKAGE}"
+    then
+      debug "${TEST_PACKAGE} is for a foreign architecture. Compiling natively not possible, skipped."
+      return 1
+    fi
+  done
   if grep -q " ${TEST_PACKAGE} " <<< "${COMPILED_PACKAGES}"
   then
     debug "${TEST_PACKAGE} was already compiled"
