@@ -286,6 +286,9 @@ then
   then
     # shellcheck disable=SC2005,SC2046
     PACKAGES=$(echo $(apt upgrade --dry-run 2> /dev/null |gawk '/^Inst/{print $2}'))
+    msg "Upgrading: ${PACKAGES}"
+    msg "Press Break (CTRL-C) to cancel, or Enter to continue"
+    read -r dummy
   else
     PACKAGES=$*
   fi
@@ -295,17 +298,21 @@ else
     usage 1
   fi
   PACKAGES=$*
-  APT_MARK_MANUAL="${APT_MARK_MANUAL}${PACKAGES} "
+  APT_MARK_MANUAL=" $(echo ${APT_MARK_MANUAL}${PACKAGES}) "
 fi
 
 trap 'echo -n "${SCRIPT_INVOCATION_SHORT_NAME}: exit on error, cleaning up"
   [[ -v COMPILED_PACKAGES_FILE ]] && rm -f "${COMPILED_PACKAGES_FILE}"
+  debug "${APT_MARK_MANUAL}"
   for PACKAGE in ${PACKAGES}
   do
-    echo -n .
-    if ! grep -q " ${PACKAGE} " <<< "${APT_MARK_MANUAL}"
+    if ! grep -q " ${PACKAGE} " <<< " $(echo ${APT_MARK_MANUAL}) "
     then
+      echo -n "#"
+      echo -n "${PACKAGE}"
       sudo apt-mark -qq auto "${PACKAGE}"
+    else
+      echo -n .
     fi
   done
   echo
@@ -391,15 +398,24 @@ do
     done
   fi
   msg "Installing prepared build-dependencies for ${PACKAGE}..."
-  sudo DEBIAN_FRONTEND=noninteractive apt -qq build-dep -y --allow-downgrades ${PACKAGE} </dev/null >/dev/null 2>/dev/null
+  # Retry loop because of timeout issues and this is a typical time when
+  # they return to their desktop after it has been compiling for a while
+  n=0
+  until [ "$n" -ge 2 ]
+  do
+    sudo DEBIAN_FRONTEND=noninteractive apt -qq build-dep -y --allow-downgrades ${PACKAGE} </dev/null >/dev/null 2>/dev/null
+  done
   msg "Marking auto-installed packages..."
   for BUILD_DEP_PACKAGE in ${BUILD_DEP_PACKAGES}
   do
+    echo -n .
     if ! grep -q " ${BUILD_DEP_PACKAGE} " <<< "${APT_MARK_MANUAL}"
     then
+      debug "${BUILD_DEP_PACKAGE}"
       sudo apt-mark -qq auto "${BUILD_DEP_PACKAGE}"
     fi
   done
+  echo
   cd "${BUILD_LOCATION}"
   find -mindepth 1 -delete
   msg "Grabbing source of ${SOURCE_PACKAGE} for ${PACKAGE}..."
@@ -419,18 +435,28 @@ do
     echo "${SOURCE_PACKAGE}=${TARGET_VERSION}" >> "${FAILED_TO_COMPILE_PACKAGES_FILE}"
     continue
   fi
+  msg "Updating package lists..."
   ${SED} "/${SOURCE_PACKAGE}=/d" -i "${FAILED_TO_COMPILE_PACKAGES_FILE}"  # Compiling was succesful. Cleanup failure file.
-  COMPILED_PACKAGES="${COMPILED_PACKAGES}$(echo $(ls *deb | cut -d_ -f1)) "
-  LANG=C mv $($DEBUG && echo -- -v || true) *.deb "${PACKAGE_LOCATION}"
+  COMPILED_PACKAGES="${COMPILED_PACKAGES}$(echo $(ls *.deb | cut -d_ -f1)) "
+  debug "Moving packages to repo"
+  LANG=C mv $($DEBUG && echo "-v" || true) *.deb "${PACKAGE_LOCATION}"
   cd "${PACKAGE_LOCATION}"
   # Remove older packages that have been replaced
+  debug "Removing outdated packages"
   ls -1 *.deb |cut -d_ -f1|sort|uniq -c|grep -v "   1 "|awk '{print $NF}'|while read line ; do ls -1r ${line}_*deb|${SED} 1d;done|xargs rm -f
   cd "$(dirname "${PACKAGE_LOCATION}")"
+  debug "Updating repo package list"
   apt-ftparchive packages $(basename "${PACKAGE_LOCATION}") > $(basename "${PACKAGE_LOCATION}")/Packages
   apt-ftparchive release -c=$(basename "${PACKAGE_LOCATION}")/aptftp.conf $(basename "${PACKAGE_LOCATION}") > $(basename "${PACKAGE_LOCATION}")/Release
-  msg "Updating package lists..."
-  sudo apt -qq update -o Dir::Etc::sourcelist="sources.list.d/local.list" \
-        -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" >/dev/null 2>/dev/null
+  # Retry loop because of timeout issues and this is a typical time when
+  # they return to their desktop after it has been compiling for a while
+  n=0
+  until [ "$n" -ge 2 ]
+  do
+    sudo apt -qq update -o Dir::Etc::sourcelist="sources.list.d/local.list" \
+          -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" >/dev/null 2>/dev/null && break || true
+    n=$((n+1))
+  done
 done < <(apt -qq install -y --allow-downgrades --dry-run $($REINSTALL && echo "--reinstall") $PACKAGES 2> /dev/null | grep "^Inst")
 msg "Installing ${PACKAGES}..."
 sudo DEBIAN_FRONTEND=noninteractive apt -qq install -y --allow-downgrades $($REINSTALL && echo "--reinstall") $PACKAGES </dev/null >/dev/null 2>/dev/null
@@ -443,9 +469,14 @@ then
   do
     if ! grep -q " ${PACKAGE} " <<< "${APT_MARK_MANUAL}"
     then
+      echo -n "#"
+      debug "${PACKAGE}"
       sudo apt-mark -qq auto "${PACKAGE}"
+    else
+      echo -n .
     fi
   done
+  echo
 fi
 
 # Also add the below lines to other exit points
