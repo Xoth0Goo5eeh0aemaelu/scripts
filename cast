@@ -402,7 +402,7 @@ do
   n=0
   until [ "$n" -ge 2 ]
   do
-    sudo apt -qq build-dep -y --allow-downgrades ${PACKAGE} </dev/null >/dev/null 2>/dev/null
+    sudo apt -qq build-dep -y --allow-downgrades ${PACKAGE} </dev/null >/dev/null 2>/dev/null && break || true
     n=$((n+1))
   done
   msg "Marking auto-installed packages..."
