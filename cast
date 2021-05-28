@@ -15,6 +15,7 @@ set -e    # exit on errors
 set -u    # disallow usage of unset variables
 #set -o pipefail  # make pipe writer failure to cause exit on error
 RETVAL=0
+export DEBIAN_FRONTEND=noninteractive
 [ -x "$(which gsed)" ] && SED="gsed" || SED="sed"
 REQUIRED_TOOLS="sudo gawk cut grep ${SED} apt apt-mark apt-ftparchive debuild tee dd"
 ###===###
@@ -301,14 +302,12 @@ else
   APT_MARK_MANUAL=" $(echo ${APT_MARK_MANUAL}${PACKAGES}) "
 fi
 
-trap 'echo -n "${SCRIPT_INVOCATION_SHORT_NAME}: exit on error, cleaning up"
+trap 'echo -n "${SCRIPT_INVOCATION_SHORT_NAME}: exit on error, cleaning up."
   [[ -v COMPILED_PACKAGES_FILE ]] && rm -f "${COMPILED_PACKAGES_FILE}"
-  debug "${APT_MARK_MANUAL}"
   for PACKAGE in ${PACKAGES}
   do
     if ! grep -q " ${PACKAGE} " <<< " $(echo ${APT_MARK_MANUAL}) "
     then
-      echo -n "#"
       echo -n "${PACKAGE}"
       sudo apt-mark -qq auto "${PACKAGE}"
     else
@@ -380,7 +379,7 @@ do
       then
         # This should never happen, but sometimes a package is its own build dependency
         msg "Huh? This package requires itself for building. Forcing binary install, then recompiling."
-        sudo DEBIAN_FRONTEND=noninteractive apt -qq install -y --allow-downgrades ${BUILD_DEP_PACKAGE} </dev/null >/dev/null 2>/dev/null
+        sudo apt -qq install -y --allow-downgrades ${BUILD_DEP_PACKAGE} </dev/null >/dev/null 2>/dev/null
       else
         if ! need_to_compile ${BUILD_DEP_PACKAGE}
         then
@@ -403,7 +402,8 @@ do
   n=0
   until [ "$n" -ge 2 ]
   do
-    sudo DEBIAN_FRONTEND=noninteractive apt -qq build-dep -y --allow-downgrades ${PACKAGE} </dev/null >/dev/null 2>/dev/null
+    sudo apt -qq build-dep -y --allow-downgrades ${PACKAGE} </dev/null >/dev/null 2>/dev/null
+    n=$((n+1))
   done
   msg "Marking auto-installed packages..."
   for BUILD_DEP_PACKAGE in ${BUILD_DEP_PACKAGES}
@@ -459,9 +459,9 @@ do
   done
 done < <(apt -qq install -y --allow-downgrades --dry-run $($REINSTALL && echo "--reinstall") $PACKAGES 2> /dev/null | grep "^Inst")
 msg "Installing ${PACKAGES}..."
-sudo DEBIAN_FRONTEND=noninteractive apt -qq install -y --allow-downgrades $($REINSTALL && echo "--reinstall") $PACKAGES </dev/null >/dev/null 2>/dev/null
+sudo apt -qq install -y --allow-downgrades $($REINSTALL && echo "--reinstall") $PACKAGES </dev/null >/dev/null 2>/dev/null
 msg "Cleaning up build dependencies..."
-sudo DEBIAN_FRONTEND=noninteractive apt -qq autoremove -y </dev/null >/dev/null 2>/dev/null
+sudo apt -qq autoremove -y </dev/null >/dev/null 2>/dev/null
 if $DO_UPGRADE
 then
   msg "Marking auto-installed packages..."
