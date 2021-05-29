@@ -279,7 +279,7 @@ fi
 # To get the initial root token (attempt at semi passwordless operation)
 sudo true
 
-LEVEL=$(pgrep -fc "${SCRIPT_INVOCATION_SHORT_NAME}")
+LEVEL=$(pgrep -xc "${SCRIPT_INVOCATION_SHORT_NAME}")
 msg "$(printf %"${LEVEL}"s |tr " " "=";echo "> ") Entering level ${LEVEL}"
 if $DO_UPGRADE
 then
