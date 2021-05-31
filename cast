@@ -308,10 +308,10 @@ trap 'echo -n "${SCRIPT_INVOCATION_SHORT_NAME}: exit on error, cleaning up."
   do
     if ! grep -q " ${PACKAGE} " <<< " $(echo ${APT_MARK_MANUAL}) "
     then
-      echo -n "${PACKAGE}"
+      echo -n "#"
       sudo apt-mark -qq auto "${PACKAGE}"
     else
-      echo -n .
+      echo -n "."
     fi
   done
   echo
