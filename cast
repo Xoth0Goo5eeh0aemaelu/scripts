@@ -399,17 +399,15 @@ do
   msg "Installing prepared build-dependencies for ${PACKAGE}..."
   # Retry loop because of timeout issues and this is a typical time when
   # they return to their desktop after it has been compiling for a while
-  n=0
-  until [ "$n" -ge 2 ]
+  for n in 1 2
   do
     sudo apt -qq build-dep -y --allow-downgrades ${PACKAGE} </dev/null >/dev/null 2>/dev/null && break || true
-    n=$((n+1))
   done
   msg "Marking auto-installed packages..."
   for BUILD_DEP_PACKAGE in ${BUILD_DEP_PACKAGES}
   do
     echo -n .
-    if ! grep -q " ${BUILD_DEP_PACKAGE} " <<< "${APT_MARK_MANUAL}"
+    if ! grep -q " ${BUILD_DEP_PACKAGE} " <<< " $(echo ${APT_MARK_MANUAL}) "
     then
       debug "${BUILD_DEP_PACKAGE}"
       sudo apt-mark -qq auto "${BUILD_DEP_PACKAGE}"
@@ -450,12 +448,10 @@ do
   apt-ftparchive release -c=$(basename "${PACKAGE_LOCATION}")/aptftp.conf $(basename "${PACKAGE_LOCATION}") > $(basename "${PACKAGE_LOCATION}")/Release
   # Retry loop because of timeout issues and this is a typical time when
   # they return to their desktop after it has been compiling for a while
-  n=0
-  until [ "$n" -ge 2 ]
+  for x in 1 2
   do
     sudo apt -qq update -o Dir::Etc::sourcelist="sources.list.d/local.list" \
           -o Dir::Etc::sourceparts="-" -o APT::Get::List-Cleanup="0" >/dev/null 2>/dev/null && break || true
-    n=$((n+1))
   done
 done < <(apt -qq install -y --allow-downgrades --dry-run $($REINSTALL && echo "--reinstall") $PACKAGES 2> /dev/null | grep "^Inst")
 msg "Installing ${PACKAGES}..."
@@ -467,7 +463,7 @@ then
   msg "Marking auto-installed packages..."
   for PACKAGE in ${PACKAGES}
   do
-    if ! grep -q " ${PACKAGE} " <<< "${APT_MARK_MANUAL}"
+    if ! grep -q " ${PACKAGE} " <<< " $(echo ${APT_MARK_MANUAL}) "
     then
       echo -n "#"
       debug "${PACKAGE}"
