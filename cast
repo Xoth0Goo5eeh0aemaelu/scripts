@@ -308,11 +308,9 @@ trap 'echo -n "${SCRIPT_INVOCATION_SHORT_NAME}: exit on error, cleaning up."
   do
     if ! grep -q " ${PACKAGE} " <<< " $(echo ${APT_MARK_MANUAL}) "
     then
-      echo -n "#"
       sudo apt-mark -qq auto "${PACKAGE}"
-    else
-      echo -n "."
     fi
+    echo -n "."
   done
   echo
   exit 1' ERR INT
@@ -409,7 +407,6 @@ do
     echo -n .
     if ! grep -q " ${BUILD_DEP_PACKAGE} " <<< " $(echo ${APT_MARK_MANUAL}) "
     then
-      debug "${BUILD_DEP_PACKAGE}"
       sudo apt-mark -qq auto "${BUILD_DEP_PACKAGE}"
     fi
   done
@@ -465,12 +462,9 @@ then
   do
     if ! grep -q " ${PACKAGE} " <<< " $(echo ${APT_MARK_MANUAL}) "
     then
-      echo -n "#"
-      debug "${PACKAGE}"
       sudo apt-mark -qq auto "${PACKAGE}"
-    else
-      echo -n .
     fi
+    echo -n .
   done
   echo
 fi
