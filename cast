@@ -420,7 +420,12 @@ do
     continue
   fi
   cd "$(find -mindepth 1 -maxdepth 1 -type d -print -quit)"
-  msg "Nicely compiling ${SOURCE_PACKAGE} for ${PACKAGE}..."
+  if [ "${SOURCE_PACKAGE}" = "${PACKAGE}" ]
+  then
+    msg "Nicely compiling ${PACKAGE}..."
+  else
+    msg "Nicely compiling ${SOURCE_PACKAGE} for ${PACKAGE}..."
+  fi
   DEB_BUILD_OPTIONS=nocheck nice debuild -us -uc 2>/dev/null >/dev/null|| true
   cd "${BUILD_LOCATION}"
   # Check for compiled packages and error if not present
