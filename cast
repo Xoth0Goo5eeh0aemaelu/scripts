@@ -208,7 +208,7 @@ fi
 APT_MARK_MANUAL=" $(echo "$(apt-mark -qq showmanual)") "
 if [ -v COMPILED_PACKAGES_FILE ]
 then
-  COMPILED_PACKAGES="$(cat "${COMPILED_PACKAGES_FILE}")"
+  COMPILED_PACKAGES="$(cat ${COMPILED_PACKAGES_FILE})"
   debug "ENTRY COMPILED (from ${COMPILED_PACKAGES_FILE}): ${COMPILED_PACKAGES}"
 else
   COMPILED_PACKAGES=" "
@@ -289,6 +289,7 @@ then
     PACKAGES=$(echo $(apt upgrade --dry-run 2> /dev/null |gawk '/^Inst/{print $2}'))
     msg "Upgrading: ${PACKAGES}"
     msg "Press Break (CTRL-C) to cancel, or Enter to continue"
+    # shellcheck disable=SC2034
     read -r dummy
   else
     PACKAGES=$*
@@ -299,6 +300,7 @@ else
     usage 1
   fi
   PACKAGES=$*
+  # shellcheck disable=SC2116,2086
   APT_MARK_MANUAL=" $(echo ${APT_MARK_MANUAL}${PACKAGES}) "
 fi
 
@@ -354,10 +356,13 @@ do
   SOURCE_PACKAGE=$(LANG=C apt -qq source --dry-run "${PACKAGE}" 2>/dev/null | grep -E "^Picking "|cut -d\' -f2)
   SOURCE_PACKAGE=${SOURCE_PACKAGE:-${PACKAGE}} # Use normal package if source name is the same
   # Add package to already compiled list before actual compilation to prevent loops
+  # shellcheck disable=SC2015
   COMPILED_PACKAGES="${COMPILED_PACKAGES}${PACKAGE} $([ -n "${SOURCE_PACKAGE}" ] && echo "${SOURCE_PACKAGE} " || true)"
+  # shellcheck disable=SC2086
   BUILD_DEP_PACKAGES="$(apt -qq --dry-run build-dep -y --allow-downgrades ${PACKAGE} 2>/dev/null |grep "^Inst"|gawk '{print $2}')"
   NUMBER_BUILD_DEP_PACKAGES=$( wc -w <<< "${BUILD_DEP_PACKAGES}")
-  TARGET_VERSION=$(LANG=C apt -qq install -y --allow-downgrades --dry-run $($REINSTALL && echo "--reinstall") ${PACKAGE} 2> /dev/null | grep "Inst ${PACKAGE} " | ${SED} 's/^.*(\([^ ]\+\) .*$/\1/' | ${SED} 's/^.*://')
+  # shellcheck disable=SC2046
+  TARGET_VERSION=$(LANG=C apt -qq install -y --allow-downgrades --dry-run $($REINSTALL && echo "--reinstall") "${PACKAGE}" 2> /dev/null | grep "Inst ${PACKAGE} " | ${SED} 's/^.*(\([^ ]\+\) .*$/\1/' | ${SED} 's/^.*://')
   # Test that source code is available
   if ! apt -qq source --dry-run "${SOURCE_PACKAGE}=${TARGET_VERSION}" 2>/dev/null >/dev/null
   then
@@ -366,29 +371,32 @@ do
   fi
 
   # loop through the build dependencies and install
-  if [ ${RECURSE_DEPTH} -gt 1 ]
+  if [ "${RECURSE_DEPTH}" -gt 1 ]
   then
     BUILD_LOOP_COUNT=0
     for BUILD_DEP_PACKAGE in ${BUILD_DEP_PACKAGES}
     do
-      BUILD_LOOP_COUNT=$((${BUILD_LOOP_COUNT} + 1))
+      BUILD_LOOP_COUNT=$(("${BUILD_LOOP_COUNT}" + 1))
       debug "Evaluating build dependency ${BUILD_LOOP_COUNT} of ${NUMBER_BUILD_DEP_PACKAGES} for ${PACKAGE}"
       if [ "${BUILD_DEP_PACKAGE}" = "${PACKAGE}" ]
       then
         # This should never happen, but sometimes a package is its own build dependency
         msg "Huh? This package requires itself for building. Forcing binary install, then recompiling."
-        sudo apt -qq install -y --allow-downgrades ${BUILD_DEP_PACKAGE} </dev/null >/dev/null 2>/dev/null
+        sudo apt -qq install -y --allow-downgrades "${BUILD_DEP_PACKAGE}" </dev/null >/dev/null 2>/dev/null
       else
-        if ! need_to_compile ${BUILD_DEP_PACKAGE}
+        if ! need_to_compile "${BUILD_DEP_PACKAGE}"
         then
           continue
         fi
         MY_COMPILED_PACKAGES_FILE=$(mktemp)
         echo "${COMPILED_PACKAGES}" > "${MY_COMPILED_PACKAGES_FILE}"
+        # shellcheck disable=SC2086
         debug "ENTRY PREPARED COMPILED: $(cat ${MY_COMPILED_PACKAGES_FILE})"
-        COMPILED_PACKAGES_FILE=${MY_COMPILED_PACKAGES_FILE} $0 -m $((${RECURSE_DEPTH}-1)) "${BUILD_DEP_PACKAGE}"
-        msg "$(echo -n "<";printf %${LEVEL}s |tr " " "=";echo " ") Returning to level ${LEVEL}"
-        COMPILED_PACKAGES="$(cat ${MY_COMPILED_PACKAGES_FILE})"
+        COMPILED_PACKAGES_FILE="${MY_COMPILED_PACKAGES_FILE}" "$0" -m $(("${RECURSE_DEPTH}"-1)) "${BUILD_DEP_PACKAGE}"
+        # shellcheck disable=SC2086
+        msg "$(echo -n "<";printf %${LEVEL}s |tr " " "=";echo " ") Returning to level ${LEVEL} (${PACKAGE})"
+        # shellcheck disable=SC2086
+        COMPILED_PACKAGES="$(cat "${MY_COMPILED_PACKAGES_FILE}")"
         debug "EXIT RETURNED COMPILED: ${COMPILED_PACKAGES}"
         rm "${MY_COMPILED_PACKAGES_FILE}"
       fi
@@ -397,14 +405,17 @@ do
   msg "Installing prepared build-dependencies for ${PACKAGE}..."
   # Retry loop because of timeout issues and this is a typical time when
   # they return to their desktop after it has been compiling for a while
+  # shellcheck disable=SC2034
   for n in 1 2
   do
-    sudo apt -qq build-dep -y --allow-downgrades ${PACKAGE} </dev/null >/dev/null 2>/dev/null && break || true
+    # shellcheck disable=SC2015
+    sudo apt -qq build-dep -y --allow-downgrades "${PACKAGE}" </dev/null >/dev/null 2>/dev/null && break || true
   done
   msg "Marking auto-installed packages..."
   for BUILD_DEP_PACKAGE in ${BUILD_DEP_PACKAGES}
   do
     echo -n .
+    # shellcheck disable=SC2116,2086
     if ! grep -q " ${BUILD_DEP_PACKAGE} " <<< " $(echo ${APT_MARK_MANUAL}) "
     then
       sudo apt-mark -qq auto "${BUILD_DEP_PACKAGE}"
@@ -412,14 +423,14 @@ do
   done
   echo
   cd "${BUILD_LOCATION}"
-  find -mindepth 1 -delete
-  msg "Grabbing source of ${SOURCE_PACKAGE} for ${PACKAGE}..."
+  find . -mindepth 1 -delete
+  msg "Grabbing ${SOURCE_PACKAGE} source for the ${PACKAGE} package..."
   if ! apt -qq source "${SOURCE_PACKAGE}=${TARGET_VERSION}" 2>/dev/null >/dev/null
   then
     msg "Source for ${PACKAGE} version ${TARGET_VERSION} seemed available, but isn't. Using binary package."
     continue
   fi
-  cd "$(find -mindepth 1 -maxdepth 1 -type d -print -quit)"
+  cd "$(find . -mindepth 1 -maxdepth 1 -type d -print -quit)"
   if [ "${SOURCE_PACKAGE}" = "${PACKAGE}" ]
   then
     msg "Nicely compiling ${PACKAGE}..."
@@ -429,7 +440,7 @@ do
   DEB_BUILD_OPTIONS=nocheck nice debuild -us -uc 2>/dev/null >/dev/null|| true
   cd "${BUILD_LOCATION}"
   # Check for compiled packages and error if not present
-  if ! ls *.deb 2>/dev/null >/dev/null
+  if ! ls -- *.deb 2>/dev/null >/dev/null
   then
     msg "Compiling ${PACKAGE} failed. Using binary package."
     echo "${SOURCE_PACKAGE}=${TARGET_VERSION}" >> "${FAILED_TO_COMPILE_PACKAGES_FILE}"
@@ -437,7 +448,7 @@ do
   fi
   msg "Updating package lists..."
   ${SED} "/${SOURCE_PACKAGE}=/d" -i "${FAILED_TO_COMPILE_PACKAGES_FILE}"  # Compiling was succesful. Cleanup failure file.
-  COMPILED_PACKAGES="${COMPILED_PACKAGES}$(echo $(ls *.deb | cut -d_ -f1)) "
+  COMPILED_PACKAGES="${COMPILED_PACKAGES}$(echo $(ls -- *.deb | cut -d_ -f1)) "
   debug "Moving packages to repo"
   LANG=C mv $($DEBUG && echo "-v" || true) *.deb "${PACKAGE_LOCATION}"
   cd "${PACKAGE_LOCATION}"
